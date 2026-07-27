@@ -1,0 +1,41 @@
+import type { Card as FsrsCard, ReviewLog as FsrsReviewLog } from 'ts-fsrs'
+
+export type RecallRating = 1 | 2 | 3 | 4
+export type CardImportance = 'S' | 'A'
+
+export type AppCard = {
+  id: string
+  deckId: string
+  order: number
+  topic: string
+  importance: CardImportance
+  score: number
+  question: string
+  coreAnswer: string
+  explanation: string
+  keyPoints: string[]
+  followUps: string[]
+  tags: string[]
+  sourceRef: string
+  source: 'builtin' | 'user' | 'ai-draft'
+}
+
+export type ReviewState = {
+  cardId: string
+  fsrsCard: FsrsCard
+  due: Date
+  reviewCount: number
+  lastRating?: RecallRating
+  lastReviewedAt?: Date
+}
+
+export type ReviewLog = FsrsReviewLog & {
+  id?: number
+  cardId: string
+}
+
+export type QueueCandidate = {
+  id: string
+  isNew: boolean
+  due?: Date
+}
