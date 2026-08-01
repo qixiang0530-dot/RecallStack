@@ -1,5 +1,5 @@
 import { ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Eye, Lightbulb, ListChecks } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppContext } from '../app/appContextValue'
 import { useAsyncData } from '../app/useAsyncData'
@@ -22,29 +22,45 @@ export function StudyPage() {
   const [viewingPrevious, setViewingPrevious] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [reviewTime, setReviewTime] = useState(() => new Date())
+  const currentItem = session?.items[session.position]
+  const previousReview = session?.previousReview
+  const item = viewingPrevious ? previousReview?.item : currentItem
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (target?.matches('input, textarea, select, [contenteditable="true"]')) return
+      if (event.key === 'ArrowLeft' && previousReview) {
+        event.preventDefault()
+        setViewingPrevious(true)
+        return
+      }
+      if (event.key === ' ' && item && !viewingPrevious && !revealed) {
+        event.preventDefault()
+        setRevealed(true)
+        return
+      }
+      const rating = Number(event.key)
+      if (item && (viewingPrevious || revealed) && rating >= 1 && rating <= 4 && !submitting) {
+        event.preventDefault()
+        void rate(rating as RecallRating)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  })
 
   if (loading && !session) return <LoadingState />
   if (error || !session) return <ErrorState message={error ?? '无法生成学习任务'} />
-  const currentItem = session.items[session.position]
-  const previousReview = session.previousReview
-  const item = viewingPrevious ? previousReview?.item : currentItem
 
   if (!item) {
-    return (
-      <div className="study-complete page">
-        <CheckCircle2 size={42} />
-        <p className="eyebrow">SESSION COMPLETE</p>
-        <h1>今天到这里</h1>
-        <p>完成了 {session.items.length} 张卡片。下一次到期时再见。</p>
-        {previousReview && <button className="history-command" onClick={() => setViewingPrevious(true)}><ChevronLeft size={17} />查看上一题</button>}
-        <Link className="primary-command" to="/">返回首页 <ChevronRight size={18} /></Link>
-      </div>
-    )
+    return <StudyComplete sessionId={session.id} onPrevious={previousReview ? () => setViewingPrevious(true) : undefined} />
   }
   const sessionId = session.id
   const itemCardId = item.card.id
 
   async function rate(rating: RecallRating) {
+    if (!session || !item) return
     setSubmitting(true)
     try {
       if (viewingPrevious) {
@@ -120,6 +136,30 @@ export function StudyPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function StudyComplete({ sessionId, onPrevious }: { sessionId: string; onPrevious?: () => void }) {
+  const { repository, revision } = useAppContext()
+  const { data, loading, error } = useAsyncData(() => repository.getStudyCompletion(sessionId), revision)
+  if (loading && !data) return <LoadingState />
+  if (error || !data) return <ErrorState message={error ?? '无法生成学习总结'} />
+  const nextDue = data.nextDue ? new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(data.nextDue) : '等待安排'
+  return (
+    <div className="study-complete page">
+      <CheckCircle2 size={42} />
+      <p className="eyebrow">SESSION COMPLETE</p>
+      <h1>今天到这里</h1>
+      <p>完成 {data.completed} / {data.total} 张卡片，下一次复习预计在 {nextDue}。</p>
+      <div className="completion-grid">
+        <div><span>新卡</span><strong>{data.newCards}</strong></div>
+        <div><span>复习</span><strong>{data.reviewCards}</strong></div>
+        <div><span>忘记 / 吃力</span><strong>{data.ratings.again + data.ratings.hard}</strong></div>
+        <div><span>记得 / 轻松</span><strong>{data.ratings.good + data.ratings.easy}</strong></div>
+      </div>
+      {onPrevious && <button className="history-command" onClick={onPrevious}><ChevronLeft size={17} />查看上一题</button>}
+      <div className="completion-actions"><Link className="text-button" to="/stats">查看统计</Link><Link className="primary-command" to="/">返回首页 <ChevronRight size={18} /></Link></div>
     </div>
   )
 }

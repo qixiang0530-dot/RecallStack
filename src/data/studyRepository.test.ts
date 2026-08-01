@@ -124,4 +124,65 @@ describe('StudyRepository', () => {
     expect(await database.reviewLogs.count()).toBe(1)
     expect((await database.reviewStates.get('java-hashmap-thread-safety'))?.lastRating).toBe(3)
   })
+
+  it('exports and restores personal cards and drafts without losing built-in cards', async () => {
+    await repository.saveDraft({
+      id: 'draft-backup', title: '线程池', topic: '并发', question: '什么是线程池？', coreAnswer: '复用线程。', explanation: '', keyPoints: [], followUps: [], tags: ['线程池'], sourceRef: 'notes.md', quality: 'ready', provider: 'local-rule', createdAt: new Date(), updatedAt: new Date()
+    })
+    const personalCard = await repository.approveDraft('draft-backup')
+    const backup = await repository.exportBackup()
+
+    await database.cards.delete(personalCard.id)
+    await database.reviewStates.delete(personalCard.id)
+    await database.decks.delete('user-materials')
+    await repository.importBackup(backup)
+
+    expect(await database.cards.get(personalCard.id)).toBeDefined()
+    expect(await database.cards.where('deckId').equals('java-basics-sample').count()).toBe(165)
+    expect(await database.decks.get('user-materials')).toBeDefined()
+  })
+
+  it('imports a v1 backup that does not contain v0.2 optional fields', async () => {
+    await repository.saveDraft({
+      id: 'legacy-import-personal', title: '个人卡片', topic: '个人资料', question: '个人问题？', coreAnswer: '个人答案。', explanation: '', keyPoints: [], followUps: [], tags: [], sourceRef: 'notes.md', quality: 'ready', provider: 'local-rule', createdAt: new Date(), updatedAt: new Date()
+    })
+    const personalCard = await repository.approveDraft('legacy-import-personal')
+    const legacyBackup = JSON.parse(await repository.exportBackup())
+    delete legacyBackup.settings.onboardingCompleted
+    delete legacyBackup.cards
+    delete legacyBackup.decks
+    delete legacyBackup.drafts
+    legacyBackup.reviewStates = legacyBackup.reviewStates.filter((state: { cardId: string }) => state.cardId !== personalCard.id).slice(0, 10)
+
+    await repository.importBackup(JSON.stringify(legacyBackup))
+
+    expect(await repository.getSettings()).toMatchObject({ onboardingCompleted: false })
+    expect(await database.cards.where('deckId').equals('java-basics-sample').count()).toBe(165)
+    expect(await database.cards.get(personalCard.id)).toBeUndefined()
+    expect(await database.decks.get('user-materials')).toBeUndefined()
+    expect(await database.reviewStates.count()).toBe(165)
+  })
+
+  it('builds a completion summary for the current daily session', async () => {
+    const now = new Date('2026-08-01T08:00:00.000Z')
+    const session = await repository.getDailyStudySession(now)
+    await repository.reviewDailySessionCard(session.id, session.items[0].card.id, 1, now)
+    await repository.reviewDailySessionCard(session.id, session.items[1].card.id, 4, now)
+
+    const summary = await repository.getStudyCompletion(session.id)
+
+    expect(summary).toMatchObject({ completed: 2, total: 5, newCards: 2, reviewCards: 0, ratings: { again: 1, easy: 1 } })
+    expect(summary.nextDue).toBeInstanceOf(Date)
+  })
+
+  it('excludes older ratings from the current session summary', async () => {
+    const sessionTime = new Date('2026-08-01T08:00:00.000Z')
+    const session = await repository.getDailyStudySession(sessionTime)
+    await repository.reviewCard(session.items[0].card.id, 2, new Date('2026-07-01T08:00:00.000Z'))
+    await repository.reviewDailySessionCard(session.id, session.items[0].card.id, 4, sessionTime)
+
+    const summary = await repository.getStudyCompletion(session.id)
+
+    expect(summary.ratings).toMatchObject({ hard: 0, easy: 1 })
+  })
 })

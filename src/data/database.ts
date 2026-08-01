@@ -1,11 +1,12 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
-import type { AppCard, RecallRating, ReviewLog, ReviewState } from '../domain/types'
+import type { AppCard, CardDraft, DeckSource, RecallRating, ReviewLog, ReviewState } from '../domain/types'
 
 export type DeckRecord = {
   id: string
   name: string
   description: string
   version: number
+  source?: DeckSource
   createdAt: Date
 }
 
@@ -13,6 +14,7 @@ export type SettingsRecord = {
   id: 'default'
   dailyNewLimit: number
   dailyReviewLimit: number
+  onboardingCompleted?: boolean
 }
 
 export type StudySessionQueueItem = {
@@ -43,6 +45,7 @@ export class RecallStackDatabase extends Dexie {
   reviewLogs!: Table<ReviewLog, number>
   settings!: EntityTable<SettingsRecord, 'id'>
   studySessions!: EntityTable<StudySessionRecord, 'id'>
+  drafts!: EntityTable<CardDraft, 'id'>
 
   constructor(name = 'recall-stack') {
     super(name)
@@ -55,6 +58,16 @@ export class RecallStackDatabase extends Dexie {
     })
     this.version(2).stores({
       studySessions: 'id, updatedAt'
+    })
+    this.version(3).stores({
+      drafts: 'id, quality, updatedAt'
+    }).upgrade(async (transaction) => {
+      await transaction.table('decks').toCollection().modify((deck: DeckRecord) => {
+        deck.source ??= deck.id === 'java-basics-sample' ? 'builtin' : 'user'
+      })
+      await transaction.table('settings').toCollection().modify((settings: SettingsRecord) => {
+        settings.onboardingCompleted ??= false
+      })
     })
   }
 }

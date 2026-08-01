@@ -1,6 +1,7 @@
-import type { AppCard, RecallRating, ReviewState } from '../domain/types'
+import type { AppCard, CardDraft, RecallRating, ReviewState } from '../domain/types'
 import { createEmptyReviewState, createStudyQueue, scheduleReviewWithLog } from '../domain/study'
 import { backupSchema, settingsInputSchema } from '../domain/schemas'
+import { USER_DECK_ID } from './sampleCards'
 import type { RecallStackDatabase, SettingsRecord, StudySessionRecord } from './database'
 
 export type StudyItem = {
@@ -30,20 +31,97 @@ export type DailyStudySession = {
   }
 }
 
+export type StudyCompletion = {
+  completed: number
+  total: number
+  newCards: number
+  reviewCards: number
+  ratings: { again: number; hard: number; good: number; easy: number }
+  nextDue?: Date
+}
+
 export class StudyRepository {
   constructor(private readonly database: RecallStackDatabase) {}
 
   async getSettings(): Promise<SettingsRecord> {
-    return (await this.database.settings.get('default')) ?? {
+    const settings = await this.database.settings.get('default')
+    if (settings) return { ...settings, onboardingCompleted: settings.onboardingCompleted ?? false }
+    return {
       id: 'default',
       dailyNewLimit: 5,
-      dailyReviewLimit: 20
+      dailyReviewLimit: 20,
+      onboardingCompleted: false
     }
   }
 
   async saveSettings(settings: Omit<SettingsRecord, 'id'>): Promise<void> {
     const validated = settingsInputSchema.parse(settings)
-    await this.database.settings.put({ id: 'default', ...validated })
+    const current = await this.getSettings()
+    await this.database.settings.put({ ...current, ...validated, id: 'default' })
+  }
+
+  async completeOnboarding(): Promise<void> {
+    const settings = await this.getSettings()
+    await this.database.settings.put({ ...settings, id: 'default', onboardingCompleted: true })
+  }
+
+  async getDrafts(): Promise<CardDraft[]> {
+    return this.database.drafts.orderBy('updatedAt').reverse().toArray()
+  }
+
+  async saveDraft(draft: CardDraft): Promise<void> {
+    await this.database.drafts.put(draft)
+  }
+
+  async deleteDraft(id: string): Promise<void> {
+    await this.database.drafts.delete(id)
+  }
+
+  async approveDraft(id: string): Promise<AppCard> {
+    const existing = await this.database.cards.get(`user-${id}`)
+    if (existing) return existing
+    const draft = await this.database.drafts.get(id)
+    if (!draft) throw new Error(`Draft not found: ${id}`)
+    if (draft.quality !== 'ready' || !draft.question.trim() || !draft.coreAnswer.trim()) {
+      throw new Error(`Draft is not ready: ${id}`)
+    }
+    const now = new Date()
+    const card: AppCard = {
+      id: `user-${draft.id}`,
+      deckId: USER_DECK_ID,
+      order: (await this.database.cards.where('deckId').equals(USER_DECK_ID).count()) + 1,
+      topic: draft.topic,
+      importance: 'A',
+      score: 5,
+      question: draft.question,
+      coreAnswer: draft.coreAnswer,
+      explanation: draft.explanation,
+      keyPoints: draft.keyPoints,
+      followUps: draft.followUps,
+      tags: draft.tags,
+      sourceRef: draft.sourceRef,
+      source: 'user'
+    }
+    await this.database.transaction('rw', [this.database.decks, this.database.cards, this.database.reviewStates, this.database.drafts], async () => {
+      const deck = await this.database.decks.get(USER_DECK_ID)
+      if (!deck) {
+        await this.database.decks.put({ id: USER_DECK_ID, name: '我的资料牌组', description: '由资料拆卡流程审核确认的个人知识卡片。', version: 1, source: 'user', createdAt: now })
+      }
+      await this.database.cards.put(card)
+      await this.database.reviewStates.put(createEmptyReviewState(card.id, now))
+      await this.database.drafts.delete(id)
+    })
+    return card
+  }
+
+  async approveReadyDrafts(): Promise<AppCard[]> {
+    const drafts = await this.database.drafts.toArray()
+    const readyDrafts = drafts.filter((draft) => draft.quality === 'ready' && draft.question.trim() && draft.coreAnswer.trim())
+    const approved: AppCard[] = []
+    for (const draft of readyDrafts) {
+      approved.push(await this.approveDraft(draft.id))
+    }
+    return approved
   }
 
   async getStudyQueue(now = new Date()): Promise<StudyItem[]> {
@@ -87,6 +165,29 @@ export class StudyRepository {
       await this.database.studySessions.put(session)
     }
     return this.hydrateStudySession(session, now)
+  }
+
+  async getStudyCompletion(sessionId: string): Promise<StudyCompletion> {
+    const session = await this.database.studySessions.get(sessionId)
+    if (!session) throw new Error(`Study session not found: ${sessionId}`)
+    const logs = await this.database.reviewLogs.toArray()
+    const sessionCardIds = new Set(session.items.slice(0, session.position).map((item) => item.cardId))
+    const sessionLogs = logs.filter((log) => sessionCardIds.has(log.cardId) && log.review >= session.createdAt)
+    const ratings = {
+      again: sessionLogs.filter((log) => log.rating === 1).length,
+      hard: sessionLogs.filter((log) => log.rating === 2).length,
+      good: sessionLogs.filter((log) => log.rating === 3).length,
+      easy: sessionLogs.filter((log) => log.rating === 4).length
+    }
+    const nextDueValues = (await this.database.reviewStates.bulkGet([...sessionCardIds])).map((state) => state?.due).filter((due): due is Date => due instanceof Date)
+    return {
+      completed: session.position,
+      total: session.items.length,
+      newCards: session.items.slice(0, session.position).filter((item) => item.isNew).length,
+      reviewCards: session.items.slice(0, session.position).filter((item) => !item.isNew).length,
+      ratings,
+      nextDue: nextDueValues.sort((first, second) => first.getTime() - second.getTime())[0]
+    }
   }
 
   async getDashboard(now = new Date()): Promise<DashboardSnapshot> {
@@ -187,11 +288,14 @@ export class StudyRepository {
   }
 
   async exportBackup(): Promise<string> {
-    const [settings, reviewStates, reviewLogs, studySessions] = await Promise.all([
+    const [settings, reviewStates, reviewLogs, studySessions, drafts, decks, cards] = await Promise.all([
       this.getSettings(),
       this.database.reviewStates.toArray(),
       this.database.reviewLogs.toArray(),
-      this.database.studySessions.toArray()
+      this.database.studySessions.toArray(),
+      this.database.drafts.toArray(),
+      this.database.decks.toArray(),
+      this.database.cards.toArray()
     ])
     return JSON.stringify({
       version: 1,
@@ -199,7 +303,10 @@ export class StudyRepository {
       settings,
       reviewStates,
       reviewLogs,
-      studySessions
+      studySessions,
+      drafts,
+      decks,
+      cards
     }, null, 2)
   }
 
@@ -207,18 +314,35 @@ export class StudyRepository {
     const backup = backupSchema.parse(JSON.parse(json))
     await this.database.transaction(
       'rw',
-      [this.database.settings, this.database.reviewStates, this.database.reviewLogs, this.database.studySessions],
+      [this.database.settings, this.database.reviewStates, this.database.reviewLogs, this.database.studySessions, this.database.drafts, this.database.decks, this.database.cards],
       async () => {
+        const currentUserCardIds = (await this.database.cards.where('source').equals('user').primaryKeys()).map(String)
+        const currentUserDeckIds = (await this.database.decks.toArray()).filter((deck) => deck.source === 'user').map((deck) => deck.id)
         await Promise.all([
           this.database.settings.clear(),
           this.database.reviewStates.clear(),
           this.database.reviewLogs.clear(),
-          this.database.studySessions.clear()
+          this.database.studySessions.clear(),
+          this.database.drafts.clear()
         ])
-        await this.database.settings.put(backup.settings)
-        await this.database.reviewStates.bulkPut(backup.reviewStates)
+        if (currentUserCardIds.length) await this.database.cards.bulkDelete(currentUserCardIds)
+        if (currentUserDeckIds.length) await this.database.decks.bulkDelete(currentUserDeckIds)
+        if (backup.cards) {
+          await this.database.cards.bulkPut(backup.cards.filter((card) => card.source === 'user'))
+        }
+        if (backup.decks) {
+          await this.database.decks.bulkPut(backup.decks.filter((deck) => deck.source === 'user' || deck.id === USER_DECK_ID))
+        }
+        await this.database.settings.put({ ...backup.settings, onboardingCompleted: backup.settings.onboardingCompleted ?? false })
+        const cardIds = (await this.database.cards.toCollection().primaryKeys()).map(String)
+        const cardIdSet = new Set(cardIds)
+        const restoredStates = backup.reviewStates.filter((state) => cardIdSet.has(state.cardId))
+        const restoredStateIds = new Set(restoredStates.map((state) => state.cardId))
+        const missingStates = cardIds.filter((cardId) => !restoredStateIds.has(cardId)).map((cardId) => createEmptyReviewState(cardId, new Date()))
+        await this.database.reviewStates.bulkPut([...restoredStates, ...missingStates])
         await this.database.reviewLogs.bulkPut(backup.reviewLogs)
         await this.database.studySessions.bulkPut(backup.studySessions)
+        if (backup.drafts) await this.database.drafts.bulkPut(backup.drafts)
       }
     )
   }

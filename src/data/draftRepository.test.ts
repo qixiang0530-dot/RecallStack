@@ -1,0 +1,109 @@
+import Dexie from 'dexie'
+import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+import { RecallStackDatabase } from './database'
+import { seedBuiltInDeck } from './seed'
+import { StudyRepository } from './studyRepository'
+import type { CardDraft } from '../domain/types'
+
+describe('draft workflow', () => {
+  let database: RecallStackDatabase
+  let repository: StudyRepository
+
+  beforeEach(async () => {
+    database = new RecallStackDatabase(`draft-test-${crypto.randomUUID()}`)
+    await seedBuiltInDeck(database)
+    repository = new StudyRepository(database)
+  })
+
+  afterEach(async () => {
+    database.close()
+    await Dexie.delete(database.name)
+  })
+
+  it('stores a draft and promotes it to the personal deck after review', async () => {
+    const draft: CardDraft = {
+      id: 'draft-thread-pool',
+      title: '线程池',
+      topic: 'Java 并发',
+      question: '什么是线程池？',
+      coreAnswer: '复用工作线程执行任务。',
+      explanation: '线程池可以降低线程创建和销毁成本。',
+      keyPoints: ['复用线程'],
+      followUps: [],
+      tags: ['线程池'],
+      sourceRef: 'notes.md · Java 并发 / 线程池',
+      quality: 'ready',
+      provider: 'local-rule',
+      createdAt: new Date('2026-08-01T08:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T08:00:00.000Z')
+    }
+
+    await repository.saveDraft(draft)
+    const card = await repository.approveDraft(draft.id)
+
+    expect(card).toMatchObject({ deckId: 'user-materials', source: 'user', question: draft.question })
+    expect(await database.drafts.get(draft.id)).toBeUndefined()
+    expect(await database.cards.get(card.id)).toMatchObject({ deckId: 'user-materials' })
+    expect(await database.reviewStates.get(card.id)).toBeDefined()
+  })
+
+  it('does not duplicate a card when the same draft is approved twice', async () => {
+    const draft = makeDraft('draft-duplicate')
+    await repository.saveDraft(draft)
+    const firstCard = await repository.approveDraft(draft.id)
+    const secondCard = await repository.approveDraft(draft.id)
+
+    expect(secondCard.id).toBe(firstCard.id)
+    expect(await database.cards.where('deckId').equals('user-materials').count()).toBe(1)
+  })
+
+  it('keeps the built-in deck isolated from personal cards', async () => {
+    await repository.saveDraft(makeDraft('draft-isolation'))
+    await repository.approveDraft('draft-isolation')
+
+    expect(await database.cards.where('deckId').equals('java-basics-sample').count()).toBe(165)
+    expect(await database.cards.where('deckId').equals('user-materials').count()).toBe(1)
+  })
+
+  it('approves all ready drafts and leaves incomplete drafts for review', async () => {
+    const first = makeDraft('draft-batch-first')
+    const second = makeDraft('draft-batch-second')
+    const incomplete = { ...makeDraft('draft-batch-incomplete'), question: '', quality: 'needs-review' as const }
+    await database.drafts.bulkPut([first, second, incomplete])
+
+    const approved = await repository.approveReadyDrafts()
+
+    expect(approved.map((card) => card.id)).toEqual(['user-draft-batch-first', 'user-draft-batch-second'])
+    expect(await database.cards.where('deckId').equals('user-materials').count()).toBe(2)
+    expect(await database.drafts.toCollection().primaryKeys()).toEqual(['draft-batch-incomplete'])
+  })
+
+  it('includes an approved personal card in the FSRS study queue', async () => {
+    await repository.saveDraft(makeDraft('draft-study-queue'))
+    const card = await repository.approveDraft('draft-study-queue')
+
+    const queue = await repository.getStudyQueue(new Date())
+
+    expect(queue.find((item) => item.card.id === card.id)).toMatchObject({ isNew: true })
+  })
+})
+
+function makeDraft(id: string): CardDraft {
+  const now = new Date('2026-08-01T08:00:00.000Z')
+  return {
+    id,
+    title: '线程池',
+    topic: 'Java 并发',
+    question: '什么是线程池？',
+    coreAnswer: '复用工作线程执行任务。',
+    explanation: '',
+    keyPoints: ['复用线程'],
+    followUps: [],
+    tags: ['线程池'],
+    sourceRef: 'notes.md · Java 并发 / 线程池',
+    quality: 'ready',
+    provider: 'local-rule',
+    createdAt: now,
+    updatedAt: now
+  }
+}

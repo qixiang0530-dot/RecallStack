@@ -1,6 +1,7 @@
 import type { AppCard } from '../domain/types'
 
 export const JAVA_DECK_ID = 'java-basics-sample'
+export const USER_DECK_ID = 'user-materials'
 
 const sampleCardContent: Omit<AppCard, 'order' | 'importance' | 'score' | 'sourceRef'>[] = [
   {

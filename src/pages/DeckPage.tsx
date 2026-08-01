@@ -1,10 +1,13 @@
-import { BookMarked, Check, Clock3, Search } from 'lucide-react'
+import { BookMarked, Check, Clock3, FilePlus2, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAppContext } from '../app/appContextValue'
 import { useAsyncData } from '../app/useAsyncData'
 import { ErrorState, LoadingState } from '../components/PageState'
 import { CardPriorityBadge } from '../components/CardPriorityBadge'
 import type { CardImportance } from '../domain/types'
+import type { DeckRecord } from '../data/database'
+import { JAVA_DECK_ID, USER_DECK_ID } from '../data/sampleCards'
 
 type ImportanceFilter = 'all' | CardImportance
 
@@ -12,30 +15,37 @@ export function DeckPage() {
   const { database, revision } = useAppContext()
   const [query, setQuery] = useState('')
   const [importance, setImportance] = useState<ImportanceFilter>('all')
+  const [selectedDeckId, setSelectedDeckId] = useState(JAVA_DECK_ID)
   const { data, loading, error } = useAsyncData(async () => {
-    const [deck, cards, states] = await Promise.all([
-      database.decks.toCollection().first(),
+    const [decks, cards, states] = await Promise.all([
+      database.decks.toArray(),
       database.cards.orderBy('order').toArray(),
       database.reviewStates.toArray()
     ])
-    return { deck, cards, states }
+    return { decks, cards, states }
   }, revision)
 
-  const filteredCards = useMemo(() => data?.cards.filter((card) => {
+  const selectedDeck = useMemo(() => getDeck(data?.decks ?? [], selectedDeckId), [data?.decks, selectedDeckId])
+  const deckCards = useMemo(() => data?.cards.filter((card) => card.deckId === selectedDeckId) ?? [], [data?.cards, selectedDeckId])
+  const filteredCards = useMemo(() => deckCards.filter((card) => {
     const haystack = `${card.question} ${card.topic} ${card.tags.join(' ')}`.toLowerCase()
     return (importance === 'all' || card.importance === importance) && haystack.includes(query.trim().toLowerCase())
-  }) ?? [], [data, importance, query])
+  }), [deckCards, importance, query])
 
   if (loading) return <LoadingState />
-  if (error || !data?.deck) return <ErrorState message={error ?? '找不到牌组'} />
+  if (error || !data || !selectedDeck) return <ErrorState message={error ?? '找不到牌组'} />
   const learnedIds = new Set(data.states.filter((state) => state.reviewCount > 0).map((state) => state.cardId))
 
   return (
     <div className="page">
       <header className="page-header compact">
-        <div><p className="eyebrow">DECK / JAVA</p><h1>{data.deck.name}</h1><p className="page-lead">{data.deck.description}</p></div>
-        <div className="deck-count"><strong>{data.cards.length}</strong><span>张卡片</span></div>
+        <div><p className="eyebrow">DECK / {selectedDeck.source === 'user' ? 'PERSONAL' : 'JAVA'}</p><h1>{selectedDeck.name}</h1><p className="page-lead">{selectedDeck.description}</p></div>
+        <div className="deck-count"><strong>{deckCards.length}</strong><span>张卡片</span></div>
       </header>
+      <div className="deck-switcher" aria-label="切换牌组">
+        <button className={selectedDeckId === JAVA_DECK_ID ? 'active' : ''} aria-pressed={selectedDeckId === JAVA_DECK_ID} onClick={() => setSelectedDeckId(JAVA_DECK_ID)}>Java 后端面试重点牌组</button>
+        <button className={selectedDeckId === USER_DECK_ID ? 'active' : ''} aria-pressed={selectedDeckId === USER_DECK_ID} onClick={() => setSelectedDeckId(USER_DECK_ID)}>我的资料牌组</button>
+      </div>
       <div className="deck-toolbar">
         <label className="search-field"><Search size={18} /><span className="sr-only">搜索卡片</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索问题、主题或标签" /></label>
         <div className="deck-toolbar-actions">
@@ -44,7 +54,7 @@ export function DeckPage() {
               <button key={value} className={importance === value ? 'active' : ''} aria-pressed={importance === value} aria-label={value === 'all' ? '查看全部等级' : `仅看 ${label}`} onClick={() => setImportance(value)}>{label}</button>
             ))}
           </div>
-          <span className="version-label">CONTENT VERSION {data.deck.version}</span>
+          <span className="version-label">CONTENT VERSION {selectedDeck.version}</span>
         </div>
       </div>
       <div className="card-list">
@@ -58,8 +68,26 @@ export function DeckPage() {
             </article>
           )
         })}
-        {filteredCards.length === 0 && <div className="empty-list"><BookMarked size={28} /><p>没有匹配的卡片</p></div>}
+        {filteredCards.length === 0 && selectedDeckId === USER_DECK_ID && !query && importance === 'all' ? (
+          <div className="empty-list"><FilePlus2 size={28} /><p>个人牌组还没有卡片</p><Link className="text-button" to="/import">前往资料拆卡</Link></div>
+        ) : filteredCards.length === 0 && <div className="empty-list"><BookMarked size={28} /><p>没有匹配的卡片</p></div>}
       </div>
     </div>
   )
+}
+
+function getDeck(decks: DeckRecord[], deckId: string): DeckRecord | undefined {
+  const deck = decks.find((item) => item.id === deckId)
+  if (deck) return deck
+  if (deckId === USER_DECK_ID) {
+    return {
+      id: USER_DECK_ID,
+      name: '我的资料牌组',
+      description: '由资料拆卡流程审核确认的个人知识卡片。',
+      version: 1,
+      source: 'user',
+      createdAt: new Date(0)
+    }
+  }
+  return undefined
 }

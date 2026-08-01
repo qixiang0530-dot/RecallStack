@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Dexie from 'dexie'
 import { MemoryRouter } from 'react-router-dom'
@@ -16,6 +16,7 @@ describe('RecallStack app', () => {
   beforeEach(async () => {
     database = new RecallStackDatabase(`test-${crypto.randomUUID()}`)
     await seedBuiltInDeck(database)
+    await database.settings.put({ id: 'default', dailyNewLimit: 5, dailyReviewLimit: 20, onboardingCompleted: true })
     repository = new StudyRepository(database)
   })
 
@@ -137,5 +138,144 @@ describe('RecallStack app', () => {
     expect(screen.getByRole('heading', { name: '薄弱卡片' })).toBeInTheDocument()
     expect(screen.getByText(weakCard.question)).toBeInTheDocument()
     expect(screen.getByText(`${weakCard.topic} · 1 张薄弱`)).toBeInTheDocument()
+  })
+
+  it('generates, edits, and approves a material card draft', async () => {
+    const user = userEvent.setup()
+    renderApp('/import')
+
+    await user.type(await screen.findByLabelText('资料内容'), '## 线程池原理\n\n线程池复用工作线程执行任务。\n\n- 控制并发数量')
+    await user.click(screen.getByRole('button', { name: '生成卡片草稿' }))
+
+    expect(await screen.findByDisplayValue('线程池原理是什么？')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '加入个人牌组' }))
+
+    await waitFor(async () => {
+      expect(await database.cards.where('deckId').equals('user-materials').count()).toBe(1)
+    })
+    expect(screen.getByText('已加入个人资料牌组')).toBeInTheDocument()
+  })
+
+  it('shows a three-step onboarding guide for a new local profile', async () => {
+    const user = userEvent.setup()
+    await database.settings.put({ id: 'default', dailyNewLimit: 5, dailyReviewLimit: 20, onboardingCompleted: false })
+    renderApp('/')
+
+    expect(await screen.findByRole('dialog', { name: '首次使用引导' })).toBeInTheDocument()
+    expect(screen.getByText('先主动回忆，再查看答案')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    expect(screen.getByText('用四档评分安排复习')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+    expect(screen.getByText('记录只保存在当前浏览器')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '开始体验' }))
+    await waitFor(async () => expect((await repository.getSettings()).onboardingCompleted).toBe(true))
+  })
+
+  it('lets a new user enter the Java demo without stepping through onboarding', async () => {
+    const user = userEvent.setup()
+    await database.settings.put({ id: 'default', dailyNewLimit: 5, dailyReviewLimit: 20, onboardingCompleted: false })
+    renderApp('/')
+
+    await user.click(await screen.findByRole('button', { name: '直接体验 Java Demo' }))
+
+    expect(await screen.findByText(javaCards[0].question)).toBeInTheDocument()
+    expect((await repository.getSettings()).onboardingCompleted).toBe(true)
+  })
+
+  it('supports keyboard reveal and rating during study', async () => {
+    const user = userEvent.setup()
+    renderApp('/study')
+    await screen.findByText(javaCards[0].question)
+
+    await user.keyboard(' ')
+    expect(await screen.findByText('30 秒回答')).toBeInTheDocument()
+    await user.keyboard('4')
+    expect(await screen.findByText(javaCards[1].question)).toBeInTheDocument()
+  })
+
+  it('does not trigger study shortcuts while editing an input', async () => {
+    const user = userEvent.setup()
+    renderApp('/study')
+    await screen.findByText(javaCards[0].question)
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+
+    await user.click(input)
+    await user.keyboard(' 4')
+
+    expect(screen.getByText(javaCards[0].question)).toBeInTheDocument()
+    expect(await database.reviewLogs.count()).toBe(0)
+    input.remove()
+  })
+
+  it('shows the personal deck without mixing built-in cards', async () => {
+    const user = userEvent.setup()
+    await repository.saveDraft({
+      id: 'deck-switch-card',
+      title: '线程池',
+      topic: 'Java 并发',
+      question: '个人资料中的线程池问题？',
+      coreAnswer: '复用工作线程。',
+      explanation: '',
+      keyPoints: ['复用线程'],
+      followUps: ['如何设置核心线程数？'],
+      tags: ['线程池', '并发'],
+      sourceRef: 'notes.md · 线程池',
+      quality: 'ready',
+      provider: 'local-rule',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    })
+    await repository.approveDraft('deck-switch-card')
+    renderApp('/deck')
+
+    await user.click(await screen.findByRole('button', { name: '我的资料牌组' }))
+
+    expect(screen.getByRole('heading', { name: '我的资料牌组' })).toBeInTheDocument()
+    expect(screen.getByText('个人资料中的线程池问题？')).toBeInTheDocument()
+    expect(screen.queryByText(javaCards[0].question)).not.toBeInTheDocument()
+  })
+
+  it('batch approves ready drafts and preserves tags and follow-ups', async () => {
+    const user = userEvent.setup()
+    renderApp('/import')
+    await user.type(await screen.findByLabelText('资料内容'), '## 什么是线程池\n线程池复用工作线程执行任务。')
+    await user.click(screen.getByRole('button', { name: '生成卡片草稿' }))
+    await screen.findByDisplayValue('什么是线程池？')
+
+    fireEvent.change(screen.getByLabelText('关键词'), { target: { value: '线程池\n并发' } })
+    await user.type(screen.getByLabelText('延伸追问'), '如何设置核心线程数？')
+    await user.click(screen.getByRole('button', { name: '确认全部可用草稿' }))
+
+    await waitFor(async () => {
+      expect(await database.cards.where('deckId').equals('user-materials').count()).toBe(1)
+    })
+    const card = (await database.cards.where('deckId').equals('user-materials').first())!
+    expect(card.tags).toEqual(['线程池', '并发'])
+    expect(card.followUps).toEqual(['如何设置核心线程数？'])
+  })
+
+  it('does not allow an incomplete draft to enter the personal deck', async () => {
+    await repository.saveDraft({
+      id: 'incomplete-draft', title: '待整理', topic: '未分类资料', question: '', coreAnswer: '', explanation: '', keyPoints: ['只有列表'], followUps: [], tags: [], sourceRef: 'notes.md', quality: 'needs-review', provider: 'local-rule', createdAt: new Date(), updatedAt: new Date()
+    })
+    renderApp('/import')
+
+    expect(await screen.findByRole('button', { name: '加入个人牌组' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '确认全部可用草稿' })).toBeDisabled()
+  })
+
+  it('shows a session summary after the final card', async () => {
+    const user = userEvent.setup()
+    await repository.saveSettings({ dailyNewLimit: 1, dailyReviewLimit: 20, onboardingCompleted: true })
+    renderApp('/study')
+    await screen.findByText(javaCards[0].question)
+    await user.keyboard(' ')
+    await user.keyboard('3')
+
+    expect(await screen.findByRole('heading', { name: '今天到这里' })).toBeInTheDocument()
+    expect(screen.getByText(/完成 1 \/ 1 张卡片/)).toBeInTheDocument()
+    expect(screen.getByText('新卡')).toBeInTheDocument()
+    expect(screen.getByText('记得 / 轻松')).toBeInTheDocument()
   })
 })

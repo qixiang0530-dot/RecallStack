@@ -14,6 +14,7 @@ export async function seedBuiltInDeck(database: RecallStackDatabase): Promise<vo
       name: 'Java 后端面试重点牌组',
       description: '覆盖 Java 基础、框架、数据库、中间件、网络、操作系统与算法的 S/A 级重点知识。',
       version: 2,
+      source: 'builtin',
       createdAt: existingDeck?.createdAt ?? now
     })
     await database.cards.bulkPut(javaCards)

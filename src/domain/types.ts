@@ -2,6 +2,29 @@ import type { Card as FsrsCard, ReviewLog as FsrsReviewLog } from 'ts-fsrs'
 
 export type RecallRating = 1 | 2 | 3 | 4
 export type CardImportance = 'S' | 'A'
+export type DeckSource = 'builtin' | 'user'
+
+export type MaterialInput = {
+  name: string
+  content: string
+}
+
+export type CardDraft = {
+  id: string
+  title: string
+  topic: string
+  question: string
+  coreAnswer: string
+  explanation: string
+  keyPoints: string[]
+  followUps: string[]
+  tags: string[]
+  sourceRef: string
+  quality: 'needs-review' | 'ready'
+  provider: 'local-rule'
+  createdAt: Date
+  updatedAt: Date
+}
 
 export type AppCard = {
   id: string

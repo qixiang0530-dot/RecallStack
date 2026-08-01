@@ -10,7 +10,7 @@ export default defineConfig({
       manifest: {
         name: 'RecallStack',
         short_name: 'RecallStack',
-        description: '像背单词一样复习 Java 八股知识',
+        description: '用主动回忆复习 Java 知识，并把个人资料拆成可审核卡片',
         theme_color: '#f5f3ed',
         background_color: '#f5f3ed',
         display: 'standalone',

@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, Home, Layers3, Settings } from 'lucide-react'
+import { BarChart3, BookOpen, FilePlus2, Home, Layers3, Settings } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 
 const navigation = [
@@ -6,7 +6,8 @@ const navigation = [
   { to: '/study', label: '学习', icon: BookOpen },
   { to: '/deck', label: '牌组', icon: Layers3 },
   { to: '/stats', label: '统计', icon: BarChart3 },
-  { to: '/settings', label: '设置', icon: Settings }
+  { to: '/settings', label: '设置', icon: Settings },
+  { to: '/import', label: '拆卡', icon: FilePlus2 }
 ]
 
 export function AppShell() {
