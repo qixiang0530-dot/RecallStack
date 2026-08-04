@@ -100,3 +100,99 @@ test('creates a personal card through the local review workflow and restores its
   await page.getByLabel('导入备份').setInputFiles(backupPath)
   await expect(page.getByText('备份已恢复')).toBeVisible()
 })
+
+test('streams AI drafts, retries a failed chunk, and requires review before approval', async ({ page }, testInfo) => {
+  let requestCount = 0
+  await page.route('https://worker.test/api/card-generation', async (route) => {
+    requestCount += 1
+    const requestBody = route.request().postDataJSON() as { chunkIndexes?: number[] }
+    if (requestCount === 1) {
+      expect(requestBody.chunkIndexes).toBeUndefined()
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: sse([
+          { type: 'start', requestId: 'e2e-request', totalChunks: 2 },
+          { type: 'chunk-start', index: 0, sourceRef: 'java.md / Java 并发' },
+          { type: 'drafts', index: 0, drafts: [mockAiDraft('thread-pool', '线程池是什么？', '线程池复用工作线程。')] },
+          { type: 'chunk-start', index: 1, sourceRef: 'java.md / Java 并发 / 队列' },
+          { type: 'chunk-error', index: 1, message: '该分块生成失败，请稍后重试', retryable: false },
+          { type: 'complete', generated: 1, failedChunks: 1 }
+        ])
+      })
+      return
+    }
+    expect(requestBody.chunkIndexes).toEqual([1])
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sse([
+        { type: 'start', requestId: 'e2e-retry', totalChunks: 1 },
+        { type: 'chunk-start', index: 1, sourceRef: 'java.md / Java 并发 / 队列' },
+        { type: 'drafts', index: 1, drafts: [mockAiDraft('work-queue', '工作队列有什么作用？', '工作队列保存待执行任务。')] },
+        { type: 'complete', generated: 1, failedChunks: 0 }
+      ])
+    })
+  })
+
+  await page.goto('/#/import')
+  await page.getByRole('button', { name: 'AI 智能拆卡' }).click()
+  await page.getByRole('checkbox', { name: /同意/ }).check()
+  await page.getByLabel('资料内容').fill('# Java 并发\n\n线程池复用工作线程。\n\n## 队列\n\n工作队列保存待执行任务。')
+  await page.getByRole('button', { name: '生成 AI 卡片草稿' }).click()
+
+  await expect(page.getByLabel('问题').first()).toHaveValue('线程池是什么？')
+  await expect(page.getByText('置信度 82%')).toBeVisible()
+  await expect(page.getByText('请确认是否需要补充适用边界。')).toBeVisible()
+  await page.getByText('查看来源片段').click()
+  await expect(page.locator('blockquote').filter({ hasText: '线程池复用工作线程。' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '重试失败分块（1）' })).toBeVisible()
+
+  await page.getByRole('button', { name: '重试失败分块（1）' }).click()
+  await expect(page.getByLabel('问题')).toHaveCount(2)
+  const questions = await page.getByLabel('问题').evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))
+  expect(questions).toContain('工作队列有什么作用？')
+  await expect(page.getByRole('button', { name: '重试失败分块（1）' })).toHaveCount(0)
+  await page.locator('.draft-section').evaluate((section) => section.scrollIntoView({ block: 'start' }))
+  await page.screenshot({ path: testInfo.outputPath('ai-import.png') })
+
+  const threadPoolDraft = page.locator('.draft-card').filter({ has: page.locator('input[value="线程池是什么？"]') })
+  await threadPoolDraft.getByRole('button', { name: '完成审核' }).click()
+  await threadPoolDraft.getByRole('button', { name: '加入个人牌组' }).click()
+  await expect(page.getByText(/已加入个人资料牌组/)).toBeVisible()
+
+  await page.reload()
+  await page.getByRole('link', { name: '牌组', exact: true }).last().click()
+  await page.getByRole('button', { name: '我的资料牌组' }).click()
+  await expect(page.getByText('线程池是什么？')).toBeVisible()
+})
+
+function sse(events: unknown[]): string {
+  return `${events.map((event) => `data: ${JSON.stringify(event)}`).join('\n\n')}\n\n`
+}
+
+function mockAiDraft(id: string, question: string, sourceExcerpt: string) {
+  const now = new Date().toISOString()
+  return {
+    id: `draft-${id}`,
+    title: question.replace(/[？?]$/, ''),
+    topic: 'Java 并发',
+    question,
+    coreAnswer: sourceExcerpt,
+    explanation: '用于验证 AI 草稿审核流程。',
+    keyPoints: [sourceExcerpt],
+    followUps: [],
+    tags: ['Java', '并发'],
+    sourceRef: 'java.md / Java 并发',
+    sourceExcerpt,
+    confidence: 0.82,
+    generationNotes: ['请确认是否需要补充适用边界。'],
+    contentHash: (id === 'thread-pool' ? 'c' : 'd').repeat(64),
+    quality: 'needs-review',
+    provider: 'llm',
+    model: 'qwen3.7-plus',
+    promptVersion: 'v0.3-card-generation-1',
+    createdAt: now,
+    updatedAt: now
+  }
+}

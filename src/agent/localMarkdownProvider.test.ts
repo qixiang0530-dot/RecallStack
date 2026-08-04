@@ -19,6 +19,8 @@ describe('LocalMarkdownProvider', () => {
       provider: 'local-rule',
       quality: 'ready'
     })
+    expect(drafts[0].sourceExcerpt).toContain('HashMap')
+    expect(drafts[0].contentHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
   it('keeps sections without a usable answer in the review queue', async () => {
@@ -30,6 +32,7 @@ describe('LocalMarkdownProvider', () => {
       quality: 'needs-review',
       coreAnswer: ''
     })
+    expect(drafts[0].provider).toBe('local-rule')
   })
 
   it('accepts plain pasted text as a single draft', async () => {

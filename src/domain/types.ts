@@ -20,8 +20,14 @@ export type CardDraft = {
   followUps: string[]
   tags: string[]
   sourceRef: string
+  sourceExcerpt?: string
+  confidence?: number
+  generationNotes?: string[]
+  contentHash?: string
   quality: 'needs-review' | 'ready'
-  provider: 'local-rule'
+  provider: 'local-rule' | 'llm'
+  model?: string
+  promptVersion?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -40,6 +46,7 @@ export type AppCard = {
   followUps: string[]
   tags: string[]
   sourceRef: string
+  contentHash?: string
   source: 'builtin' | 'user' | 'ai-draft'
 }
 

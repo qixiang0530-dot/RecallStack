@@ -15,6 +15,8 @@ export type SettingsRecord = {
   dailyNewLimit: number
   dailyReviewLimit: number
   onboardingCompleted?: boolean
+  aiConsentVersion?: string
+  aiConsentAcceptedAt?: Date
 }
 
 export type StudySessionQueueItem = {
@@ -67,6 +69,16 @@ export class RecallStackDatabase extends Dexie {
       })
       await transaction.table('settings').toCollection().modify((settings: SettingsRecord) => {
         settings.onboardingCompleted ??= false
+      })
+      })
+    this.version(4).stores({
+      drafts: 'id, quality, updatedAt'
+    }).upgrade(async (transaction) => {
+      await transaction.table('drafts').toCollection().modify((draft: CardDraft) => {
+        draft.sourceExcerpt ??= ''
+        draft.confidence ??= 0
+        draft.generationNotes ??= []
+        draft.contentHash ??= ''
       })
     })
   }

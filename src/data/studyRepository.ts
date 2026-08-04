@@ -1,4 +1,5 @@
 import type { AppCard, CardDraft, RecallRating, ReviewState } from '../domain/types'
+import { createContentHash } from '../agent/contentHash'
 import { createEmptyReviewState, createStudyQueue, scheduleReviewWithLog } from '../domain/study'
 import { backupSchema, settingsInputSchema } from '../domain/schemas'
 import { USER_DECK_ID } from './sampleCards'
@@ -40,6 +41,11 @@ export type StudyCompletion = {
   nextDue?: Date
 }
 
+export type ApprovalSummary = {
+  approved: AppCard[]
+  skipped: number
+}
+
 export class StudyRepository {
   constructor(private readonly database: RecallStackDatabase) {}
 
@@ -65,8 +71,14 @@ export class StudyRepository {
     await this.database.settings.put({ ...settings, id: 'default', onboardingCompleted: true })
   }
 
+  async acceptAiConsent(version: string, acceptedAt = new Date()): Promise<void> {
+    const settings = await this.getSettings()
+    await this.database.settings.put({ ...settings, aiConsentVersion: version, aiConsentAcceptedAt: acceptedAt, id: 'default' })
+  }
+
   async getDrafts(): Promise<CardDraft[]> {
-    return this.database.drafts.orderBy('updatedAt').reverse().toArray()
+    const drafts = await this.database.drafts.orderBy('updatedAt').reverse().toArray()
+    return drafts.sort((first, second) => reviewRisk(second) - reviewRisk(first) || second.updatedAt.getTime() - first.updatedAt.getTime())
   }
 
   async saveDraft(draft: CardDraft): Promise<void> {
@@ -85,6 +97,13 @@ export class StudyRepository {
     if (draft.quality !== 'ready' || !draft.question.trim() || !draft.coreAnswer.trim()) {
       throw new Error(`Draft is not ready: ${id}`)
     }
+    const contentHash = await createContentHash([draft.topic, draft.question, draft.coreAnswer])
+    const personalCards = await this.database.cards.where('source').equals('user').toArray()
+    const duplicate = await findDuplicateCard(personalCards, contentHash)
+    if (duplicate) {
+      await this.database.drafts.delete(id)
+      return duplicate
+    }
     const now = new Date()
     const card: AppCard = {
       id: `user-${draft.id}`,
@@ -100,9 +119,17 @@ export class StudyRepository {
       followUps: draft.followUps,
       tags: draft.tags,
       sourceRef: draft.sourceRef,
+      contentHash,
       source: 'user'
     }
+    let approvedCard = card
     await this.database.transaction('rw', [this.database.decks, this.database.cards, this.database.reviewStates, this.database.drafts], async () => {
+      const duplicateInTransaction = await findDuplicateCard(await this.database.cards.where('source').equals('user').toArray(), contentHash)
+      if (duplicateInTransaction) {
+        await this.database.drafts.delete(id)
+        approvedCard = duplicateInTransaction
+        return
+      }
       const deck = await this.database.decks.get(USER_DECK_ID)
       if (!deck) {
         await this.database.decks.put({ id: USER_DECK_ID, name: '我的资料牌组', description: '由资料拆卡流程审核确认的个人知识卡片。', version: 1, source: 'user', createdAt: now })
@@ -111,17 +138,29 @@ export class StudyRepository {
       await this.database.reviewStates.put(createEmptyReviewState(card.id, now))
       await this.database.drafts.delete(id)
     })
-    return card
+    return approvedCard
   }
 
   async approveReadyDrafts(): Promise<AppCard[]> {
+    const summary = await this.approveReadyDraftsDetailed()
+    return summary.approved
+  }
+
+  async approveReadyDraftsDetailed(): Promise<ApprovalSummary> {
     const drafts = await this.database.drafts.toArray()
     const readyDrafts = drafts.filter((draft) => draft.quality === 'ready' && draft.question.trim() && draft.coreAnswer.trim())
     const approved: AppCard[] = []
+    let skipped = 0
     for (const draft of readyDrafts) {
-      approved.push(await this.approveDraft(draft.id))
+      const contentHash = await createContentHash([draft.topic, draft.question, draft.coreAnswer])
+      const existing = await this.database.cards.get(`user-${draft.id}`)
+      const personalCards = await this.database.cards.where('source').equals('user').toArray()
+      const duplicate = existing || await findDuplicateCard(personalCards, contentHash)
+      const card = await this.approveDraft(draft.id)
+      if (duplicate) skipped += 1
+      else approved.push(card)
     }
-    return approved
+    return { approved, skipped }
   }
 
   async getStudyQueue(now = new Date()): Promise<StudyItem[]> {
@@ -298,7 +337,7 @@ export class StudyRepository {
       this.database.cards.toArray()
     ])
     return JSON.stringify({
-      version: 1,
+      version: 2,
       exportedAt: new Date(),
       settings,
       reviewStates,
@@ -386,4 +425,20 @@ function calculateStreak(reviewDays: Set<string>, now: Date): number {
     cursor.setDate(cursor.getDate() - 1)
   }
   return streak
+}
+
+function reviewRisk(draft: CardDraft): number {
+  if (draft.provider !== 'llm') return 0
+  return (draft.quality === 'needs-review' ? 1 : 0) + (draft.generationNotes?.length ? 2 : 0) + (1 - (draft.confidence ?? 0))
+}
+
+async function findDuplicateCard(cards: AppCard[], contentHash: string): Promise<AppCard | undefined> {
+  for (const card of cards) {
+    if (card.contentHash === contentHash) return card
+    if (!card.contentHash) {
+      const legacyHash = await createContentHash([card.topic, card.question, card.coreAnswer])
+      if (legacyHash === contentHash) return card
+    }
+  }
+  return undefined
 }

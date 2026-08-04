@@ -1,7 +1,7 @@
 {
   "name": "recall-stack",
   "private": true,
-  "version": "0.2.0-beta.1",
+  "version": "0.3.0-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -10,6 +10,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "worker:test": "npm run worker:unit && npm run worker:typecheck",
+    "worker:unit": "vitest run worker",
+    "worker:typecheck": "tsc -p worker/tsconfig.json --noEmit",
+    "worker:dev": "wrangler dev --config worker/wrangler.toml",
+    "worker:deploy": "wrangler deploy --config worker/wrangler.toml",
     "generate:java-cards": "node scripts/generate-java-cards.mjs",
     "lint": "eslint .",
     "check": "npm run lint && npm test && npm run build"
@@ -25,6 +30,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
     "@eslint/js": "^9.17.0",
     "@playwright/test": "^1.49.1",
     "@testing-library/jest-dom": "^6.6.3",
@@ -43,6 +49,7 @@
     "typescript": "~5.7.2",
     "typescript-eslint": "^8.18.2",
     "vite": "^6.0.5",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "wrangler": "^4.118.0"
   }
 }

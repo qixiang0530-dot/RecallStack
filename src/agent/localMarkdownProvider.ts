@@ -1,11 +1,11 @@
 import type { CardDraft, CardGenerationProvider, MaterialInput } from './types'
+import { createContentHash } from './contentHash'
 
 export class LocalMarkdownProvider implements CardGenerationProvider {
   async generate(input: MaterialInput): Promise<CardDraft[]> {
     const sections = splitSections(input.content)
-    return sections
-      .map((section, index) => createDraft(input.name, section, index))
-      .filter((draft): draft is CardDraft => draft !== undefined)
+    const drafts = await Promise.all(sections.map((section, index) => createDraft(input.name, section, index)))
+    return drafts.filter((draft): draft is CardDraft => draft !== undefined)
   }
 }
 
@@ -27,7 +27,7 @@ function splitSections(content: string): Array<{ headings: string[]; body: strin
   return sections
 }
 
-function createDraft(fileName: string, section: { headings: string[]; body: string[] }, index: number): CardDraft | undefined {
+async function createDraft(fileName: string, section: { headings: string[]; body: string[] }, index: number): Promise<CardDraft | undefined> {
   const title = section.headings.at(-1) ?? `资料片段 ${index + 1}`
   const topic = section.headings[0] ?? '未分类资料'
   const bullets = section.body.filter((line) => /^[-*+]\s+/.test(line)).map((line) => line.replace(/^[-*+]\s+/, ''))
@@ -36,6 +36,8 @@ function createDraft(fileName: string, section: { headings: string[]; body: stri
   const inlineQuestion = buildQuestion(firstLine, paragraphs[1] ?? '')
   const question = buildQuestion(title, firstLine) || inlineQuestion
   const coreAnswer = question === inlineQuestion ? paragraphs[1] ?? '' : firstLine && question ? firstLine : ''
+  const sourceExcerpt = [title, ...section.body].join('\n').slice(0, 1200)
+  const contentHash = await createContentHash([topic, question, coreAnswer])
   const now = new Date()
   return {
     id: `draft-${slugify(`${fileName}-${topic}-${title}`)}`,
@@ -48,6 +50,10 @@ function createDraft(fileName: string, section: { headings: string[]; body: stri
     followUps: [],
     tags: uniqueTags(section.headings.length ? `${topic} ${title}` : question.replace(/^什么是/, '').replace(/[？?]$/, '')),
     sourceRef: `${fileName} · ${section.headings.join(' / ') || '未分类资料'}`,
+    sourceExcerpt,
+    confidence: question && coreAnswer ? 0.5 : 0,
+    generationNotes: [],
+    contentHash,
     quality: question && coreAnswer ? 'ready' : 'needs-review',
     provider: 'local-rule',
     createdAt: now,

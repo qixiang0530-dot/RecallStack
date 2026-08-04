@@ -89,12 +89,21 @@ describe('StudyRepository', () => {
     await expect(repository.saveSettings({ dailyNewLimit: 0, dailyReviewLimit: 20 })).rejects.toThrow()
   })
 
+  it('persists the AI material consent version and time', async () => {
+    const acceptedAt = new Date('2026-08-04T08:00:00.000Z')
+
+    await repository.acceptAiConsent('v0.3', acceptedAt)
+
+    expect(await repository.getSettings()).toMatchObject({ aiConsentVersion: 'v0.3', aiConsentAcceptedAt: acceptedAt })
+  })
+
   it('exports and restores all local learning data', async () => {
     const reviewedAt = new Date('2026-07-21T08:00:00.000Z')
     const session = await repository.getDailyStudySession(reviewedAt)
     await repository.saveSettings({ dailyNewLimit: 8, dailyReviewLimit: 40 })
     await repository.reviewDailySessionCard(session.id, session.items[0].card.id, 2, reviewedAt)
     const backup = await repository.exportBackup()
+    expect(JSON.parse(backup).version).toBe(2)
 
     await repository.resetProgress(new Date('2026-07-22T08:00:00.000Z'))
     await repository.saveSettings({ dailyNewLimit: 3, dailyReviewLimit: 10 })
@@ -148,6 +157,7 @@ describe('StudyRepository', () => {
     })
     const personalCard = await repository.approveDraft('legacy-import-personal')
     const legacyBackup = JSON.parse(await repository.exportBackup())
+    legacyBackup.version = 1
     delete legacyBackup.settings.onboardingCompleted
     delete legacyBackup.cards
     delete legacyBackup.decks

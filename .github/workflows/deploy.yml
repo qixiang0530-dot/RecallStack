@@ -26,7 +26,11 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
-      - run: npm run build
+      - run: npm run worker:test
+      - name: Build web app
+        run: npm run build
+        env:
+          VITE_CARD_GENERATION_API_URL: ${{ vars.VITE_CARD_GENERATION_API_URL }}
       - run: npm run test:e2e
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

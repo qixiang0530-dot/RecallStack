@@ -8,6 +8,7 @@ import { seedBuiltInDeck } from '../data/seed'
 import { StudyRepository } from '../data/studyRepository'
 import { AppProvider } from './AppContext'
 import { AppRoutes } from './App'
+import { vi } from 'vitest'
 
 describe('RecallStack app', () => {
   let database: RecallStackDatabase
@@ -21,6 +22,8 @@ describe('RecallStack app', () => {
   })
 
   afterEach(async () => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
     database.close()
     await Dexie.delete(database.name)
   })
@@ -156,6 +159,38 @@ describe('RecallStack app', () => {
     expect(screen.getByText('已加入个人资料牌组')).toBeInTheDocument()
   })
 
+  it('requires explicit review before an AI draft can enter the personal deck', async () => {
+    const user = userEvent.setup()
+    vi.stubEnv('VITE_CARD_GENERATION_API_URL', 'https://worker.test/api/card-generation')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response([
+      `data: ${JSON.stringify({ type: 'start', requestId: 'req-ui', totalChunks: 1 })}`,
+      `data: ${JSON.stringify({ type: 'chunk-start', index: 0, sourceRef: 'notes.md / Java 并发' })}`,
+      `data: ${JSON.stringify({ type: 'drafts', index: 0, drafts: [aiDraft()] })}`,
+      `data: ${JSON.stringify({ type: 'complete', generated: 1, failedChunks: 0 })}`
+    ].join('\n\n') + '\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } })))
+
+    renderApp('/import')
+    await user.click(await screen.findByRole('button', { name: 'AI 智能拆卡' }))
+    await user.click(screen.getByRole('checkbox', { name: /同意/ }))
+    await user.type(await screen.findByLabelText('资料内容'), '# Java 并发\n\n线程池复用工作线程。')
+    await user.click(screen.getByRole('button', { name: '生成 AI 卡片草稿' }))
+
+    expect(await screen.findByDisplayValue('线程池是什么？')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '完成审核' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '加入个人牌组' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '完成审核' }))
+    const question = await screen.findByDisplayValue('线程池是什么？')
+    await user.clear(question)
+    await user.type(question, '线程池是什么？（已编辑）')
+    expect(screen.getByRole('button', { name: '完成审核' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '加入个人牌组' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '完成审核' }))
+    await user.click(await screen.findByRole('button', { name: '加入个人牌组' }))
+    await waitFor(async () => expect(await database.cards.where('deckId').equals('user-materials').count()).toBe(1))
+
+  })
+
   it('shows a three-step onboarding guide for a new local profile', async () => {
     const user = userEvent.setup()
     await database.settings.put({ id: 'default', dailyNewLimit: 5, dailyReviewLimit: 20, onboardingCompleted: false })
@@ -279,3 +314,28 @@ describe('RecallStack app', () => {
     expect(screen.getByText('记得 / 轻松')).toBeInTheDocument()
   })
 })
+
+function aiDraft() {
+  return {
+    id: 'ai-draft-thread-pool',
+    title: '线程池',
+    topic: 'Java 并发',
+    question: '线程池是什么？',
+    coreAnswer: '线程池复用工作线程执行任务。',
+    explanation: '通过复用线程减少频繁创建和销毁的开销。',
+    keyPoints: ['复用工作线程'],
+    followUps: ['线程池如何控制并发？'],
+    tags: ['线程池', '并发'],
+    sourceRef: 'notes.md / Java 并发',
+    sourceExcerpt: '线程池复用工作线程。',
+    confidence: 0.82,
+    generationNotes: ['请确认是否需要补充队列策略。'],
+    contentHash: 'b'.repeat(64),
+    quality: 'needs-review' as const,
+    provider: 'llm' as const,
+    model: 'qwen3.7-plus',
+    promptVersion: 'v0.3-card-generation-1',
+    createdAt: new Date(),
+    updatedAt: new Date()
+  }
+}

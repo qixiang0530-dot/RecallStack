@@ -15,7 +15,7 @@ export default defineConfig({
     { name: 'mobile-chrome', use: { ...devices['Pixel 7'], channel: 'chrome' } }
   ],
   webServer: {
-    command: 'npx vite --host 0.0.0.0 --port 4173',
+    command: 'npx vite --mode test --host 0.0.0.0 --port 4173',
     url: 'http://127.0.0.1:4173',
     reuseExistingServer: !process.env.CI
   }
