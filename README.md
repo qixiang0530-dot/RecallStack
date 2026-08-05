@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/recallstack-hero.png" alt="RecallStack 机器人与记忆卡片" width="520" />
+  <img src="docs/assets/recallstack-hero.png" alt="RecallStack 机器人与记忆卡片" width="260" />
 </p>
 
 <h1 align="center">RecallStack · Java Memory Lab</h1>
