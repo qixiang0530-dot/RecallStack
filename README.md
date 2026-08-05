@@ -1,8 +1,24 @@
-# RecallStack
+<p align="center">
+  <img src="docs/assets/recallstack-hero.png" alt="RecallStack 机器人与记忆卡片" width="520" />
+</p>
 
-> 把 Java 八股，做成背单词式的主动回忆工具。
+<h1 align="center">RecallStack · Java Memory Lab</h1>
 
-[在线 Demo](https://qixiang0530-dot.github.io/RecallStack/) | [GitHub 仓库](https://github.com/qixiang0530-dot/RecallStack) | `v0.3.0-beta.3`
+<p align="center">把 Java 八股资料变成可审核、可复习的知识卡片。</p>
+
+<p align="center">
+  <a href="https://qixiang0530-dot.github.io/RecallStack/">在线 Demo</a>
+  ·
+  <a href="https://github.com/qixiang0530-dot/RecallStack">GitHub 仓库</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-v0.3.0--beta.4-1f5c4a" alt="v0.3.0-beta.4" />
+  <img src="https://img.shields.io/badge/model-DeepSeek-222222" alt="DeepSeek" />
+  <img src="https://img.shields.io/badge/gateway-Cloudflare%20Worker-f38020" alt="Cloudflare Worker" />
+  <img src="https://img.shields.io/badge/tests-92%20passed-2ea44f" alt="92 tests passed" />
+  <img src="https://img.shields.io/badge/license-MIT-0f766e" alt="MIT license" />
+</p>
 
 RecallStack 是一个面向 Java 后端学习的 Web/PWA。它保留“先回忆、再看答案、最后按掌握程度评分”的学习节奏，也支持把 Markdown 或纯文本资料拆成可审核的知识卡片。
 
