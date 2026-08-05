@@ -1,7 +1,7 @@
 import type { MaterialInput } from '../../src/domain/types'
 
-export const MAX_MATERIAL_LENGTH = 60_000
-export const MAX_CHUNKS = 10
+export const MAX_MATERIAL_LENGTH = 12_000
+export const MAX_CHUNKS = 3
 export const TARGET_CHUNK_LENGTH = 4_000
 export const HARD_CHUNK_LENGTH = 6_000
 export const MIN_MERGE_LENGTH = 800
@@ -19,13 +19,13 @@ type Section = {
 
 export function chunkMaterial(input: MaterialInput): MaterialChunk[] {
   const content = input.content.trim()
-  if (content.length > MAX_MATERIAL_LENGTH) throw new Error('资料过长，最多支持 60000 个字符')
+  if (content.length > MAX_MATERIAL_LENGTH) throw new Error(`资料过长，最多支持 ${MAX_MATERIAL_LENGTH} 个字符`)
   if (!content) return []
 
   const sections = parseSections(content)
   const chunks = sections.flatMap((section) => splitSection(input.name, section))
   const merged = mergeShortChunks(chunks)
-  if (merged.length > MAX_CHUNKS) throw new Error('资料分块过多，请减少资料长度或分批导入')
+  if (merged.length > MAX_CHUNKS) throw new Error(`资料分块过多，公开 Beta 最多支持 ${MAX_CHUNKS} 个分块`)
   return merged.map((chunk, index) => ({ ...chunk, index }))
 }
 

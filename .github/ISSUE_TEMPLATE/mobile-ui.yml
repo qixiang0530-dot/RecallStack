@@ -1,0 +1,25 @@
+name: 页面或移动端问题
+description: 反馈页面布局、交互或移动端兼容性问题
+title: "[页面] "
+labels:
+  - bug
+body:
+  - type: input
+    id: device
+    attributes:
+      label: 设备和浏览器
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: 页面路径
+      placeholder: /import
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true

@@ -30,6 +30,13 @@ describe('LlmCardGenerationProvider', () => {
     await expect(provider.generate({ name: 'java.md', content: '资料' })).rejects.toThrow('请求过于频繁')
   })
 
+  it('explains public beta budget exhaustion', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 'DAILY_BUDGET_EXCEEDED', message: '今日 AI 拆卡额度已用完' }), { status: 429 }))
+    const provider = new LlmCardGenerationProvider('https://worker.test/api/card-generation', fetchImpl)
+
+    await expect(provider.generate({ name: 'java.md', content: '资料' })).rejects.toThrow('今日 AI 拆卡额度已用完')
+  })
+
   it('requires a configured worker URL', async () => {
     const provider = new LlmCardGenerationProvider('')
 
@@ -103,7 +110,7 @@ function draft() {
     contentHash: 'a'.repeat(64),
     quality: 'needs-review' as const,
     provider: 'llm' as const,
-    model: 'qwen3.7-plus',
+    model: 'deepseek-v4-flash',
     promptVersion: 'v0.3-card-generation-1',
     createdAt: new Date(),
     updatedAt: new Date()

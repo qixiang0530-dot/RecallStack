@@ -8,9 +8,10 @@ import { LocalMarkdownProvider } from '../agent/localMarkdownProvider'
 import type { GenerationEvent } from '../agent/types'
 import type { CardDraft, MaterialInput } from '../domain/types'
 import { ErrorState, LoadingState } from '../components/PageState'
+import { AI_CONSENT_VERSION, AI_MODEL_LABEL, APP_VERSION } from '../app/release'
+import { JAVA_THREAD_POOL_DEMO, JAVA_THREAD_POOL_DEMO_NAME } from '../data/demoMaterial'
 
 const localProvider = new LocalMarkdownProvider()
-const AI_CONSENT_VERSION = 'v0.3'
 
 type ImportMode = 'local' | 'llm'
 type GenerationProgress = {
@@ -68,6 +69,7 @@ export function ImportPage() {
     const controller = new AbortController()
     setCancelController(controller)
     const failed = new Set<number>(chunkIndexes ?? [])
+    const failureMessages: string[] = []
     try {
       if (mode === 'local') {
         const generated = await localProvider.generate(input)
@@ -94,7 +96,8 @@ export function ImportPage() {
       const failedIndexes = [...failed].sort((first, second) => first - second)
       setProgress((current) => current ? { ...current, failedIndexes, currentIndex: undefined } : undefined)
       showMessage(
-        failedIndexes.length ? `已生成 ${generated.length} 张草稿，${failedIndexes.length} 个分块失败，可单独重试。` : `已生成 ${generated.length} 张 AI 草稿`
+        failedIndexes.length ? `已生成 ${generated.length} 张草稿，${failedIndexes.length} 个分块失败，可单独重试。${failureMessages[0] ? ` ${failureMessages[0]}` : ''}` : `已生成 ${generated.length} 张 AI 草稿`,
+        failedIndexes.length ? 'error' : 'success'
       )
       if (!failedIndexes.length) setContent('')
     } catch (generationError) {
@@ -132,6 +135,7 @@ export function ImportPage() {
         refresh()
       }
       if (event.type === 'chunk-error') {
+        failureMessages.push(event.message)
         failedIndexes.add(event.index)
         setProgress((current) => current ? {
           ...current,
@@ -160,6 +164,12 @@ export function ImportPage() {
     setDraftEdits((current) => ({ ...current, [draft.id]: draft }))
   }
 
+  function loadDemoMaterial() {
+    setFileName(JAVA_THREAD_POOL_DEMO_NAME)
+    setContent(JAVA_THREAD_POOL_DEMO)
+    showMessage('已载入 Java 线程池示例，可以直接体验 AI 或本地拆卡。')
+  }
+
   async function approveAll() {
     const readyDrafts = visibleDrafts.filter(canApprove).map((draft) => ({ ...draft, quality: 'ready' as const, updatedAt: new Date() }))
     if (!readyDrafts.length) return
@@ -186,7 +196,7 @@ export function ImportPage() {
   return (
     <div className="page import-page">
       <header className="page-header compact">
-        <div><p className="eyebrow">MATERIAL / CARD WORKFLOW</p><h1>资料拆卡</h1><p className="page-lead">把资料整理成可审核的知识卡片草稿。</p></div>
+        <div><p className="eyebrow">PUBLIC BETA / {APP_VERSION}</p><h1>资料拆卡</h1><p className="page-lead">把资料整理成可审核的知识卡片草稿。</p></div>
       </header>
       <section className="import-composer">
         <div className="section-heading"><div><span className="section-index">INPUT / 01</span><h2>导入资料</h2></div><FileText size={20} /></div>
@@ -196,13 +206,15 @@ export function ImportPage() {
         </div>
         {mode === 'llm' && <div className="ai-consent-box">
           <strong>资料发送说明</strong>
-          <p>AI 模式会把本次资料发送到 RecallStack Worker，再转发给阿里云百炼 qwen3.7-plus。资料不会写入 Worker 数据库，生成结果仍需你审核。</p>
+          <p>AI 模式会把本次资料发送到 RecallStack Worker，再转发给 {AI_MODEL_LABEL}。不要上传公司内部资料或敏感内容；资料不会写入 Worker 数据库，生成结果仍需你审核。</p>
+          <p className="ai-limit-note">公开 Beta 限制：单次最多 12000 字符、3 个分块和 8 张卡片；每日 AI 额度有限。</p>
           <label><input type="checkbox" checked={consentGranted} disabled={settings.aiConsentVersion === AI_CONSENT_VERSION} onChange={(event) => { void acceptConsent(event.target.checked) }} />我同意将本次资料发送到 AI 拆卡服务</label>
         </div>}
-        {!aiAvailable && <p className="provider-note">AI 模式尚未配置 Worker URL，当前可使用本地规则拆卡。</p>}
+        {aiAvailable ? <p className="provider-note">AI 服务：{AI_MODEL_LABEL} Worker 已配置；公开 Beta 每 IP 每分钟最多 2 次。</p> : <p className="provider-note">AI 模式尚未配置 Worker URL，当前可使用本地规则拆卡。</p>}
         <label className="material-input-label" htmlFor="material-content">资料内容</label>
         <textarea id="material-content" value={content} onChange={(event) => setContent(event.target.value)} placeholder="粘贴 Markdown 或纯文本资料" />
         <div className="import-actions">
+          <button className="text-button" onClick={loadDemoMaterial}><FileText size={17} />载入 Java 线程池示例</button>
           <label className="text-button" htmlFor="material-file"><Upload size={17} />选择 Markdown</label>
           <input id="material-file" className="backup-file-input" type="file" accept=".md,text/markdown,text/plain" aria-label="选择 Markdown 文件" onChange={(event) => { void importFile(event.target.files?.[0]); event.target.value = '' }} />
           <span className="file-name">{fileName}</span>

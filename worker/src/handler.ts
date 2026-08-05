@@ -3,11 +3,14 @@ import type { GenerationEvent } from '../../src/agent/types'
 import { buildLlmDraft, llmCardsResponseSchema, normalizeModelPayload } from './cardSchema'
 import { chunkMaterial, HARD_CHUNK_LENGTH, type MaterialChunk } from './chunking'
 
-const MODEL = 'qwen3.7-plus'
-const PROMPT_VERSION = 'v0.3-card-generation-1'
-const DEFAULT_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+const MODEL = 'deepseek-v4-flash'
+const PROMPT_VERSION = 'v0.3-deepseek-card-generation-1'
+const DEFAULT_BASE_URL = 'https://api.deepseek.com'
 const CHUNK_TIMEOUT_MS = 45_000
-const MAX_DRAFTS_PER_REQUEST = 30
+const MAX_OUTPUT_TOKENS = 4096
+const MAX_DRAFTS_PER_REQUEST = 8
+const DEFAULT_DAILY_TOKEN_SOFT_LIMIT = 80_000
+const MAX_REQUEST_BODY_BYTES = 64_000
 
 const requestSchema = z.object({
   material: z.object({ name: z.string().trim().min(1).max(240), content: z.string().trim().min(1) }),
@@ -18,9 +21,29 @@ export type RateLimiter = {
   limit(options: { key: string }): Promise<{ success: boolean }>
 }
 
+export type BudgetStore = {
+  get(key: string): Promise<string | null>
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>
+}
+
+type TokenUsage = {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
+type GeneratedChunk = {
+  drafts: Awaited<ReturnType<typeof buildLlmDraft>>[]
+  usage: TokenUsage
+}
+
 export type WorkerEnv = {
-  DASHSCOPE_API_KEY?: string
-  DASHSCOPE_BASE_URL?: string
+  DEEPSEEK_API_KEY?: string
+  DEEPSEEK_BASE_URL?: string
+  AI_GENERATION_ENABLED?: string
+  REQUIRE_DAILY_BUDGET?: string
+  DAILY_TOKEN_SOFT_LIMIT?: string
+  DAILY_BUDGET?: BudgetStore
   ALLOWED_ORIGINS?: string
   RATE_LIMITER?: RateLimiter
   fetchImpl?: typeof fetch
@@ -38,13 +61,23 @@ export async function handleRequest(request: Request, env: WorkerEnv): Promise<R
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
   if (origin && !isAllowedOrigin(origin, env)) return jsonError('FORBIDDEN_ORIGIN', '当前来源不允许调用拆卡服务', 403, cors)
   if (request.method !== 'POST') return jsonError('METHOD_NOT_ALLOWED', '只支持 POST 请求', 405, cors)
+  if (env.AI_GENERATION_ENABLED === 'false') return jsonError('AI_DISABLED', 'AI 拆卡服务当前已暂停，请使用本地规则模式', 503, cors)
 
   const limiterResult = await env.RATE_LIMITER?.limit({ key: getClientKey(request) })
   if (limiterResult && !limiterResult.success) return jsonError('RATE_LIMITED', '请求过于频繁，请稍后再试', 429, cors)
 
+  const declaredLength = Number(request.headers.get('content-length') ?? '')
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
+    return jsonError('REQUEST_TOO_LARGE', '请求体超过公开 Beta 限制', 413, cors)
+  }
+
   let parsed: z.infer<typeof requestSchema>
   try {
-    parsed = requestSchema.parse(await request.json())
+    const rawBody = await request.text()
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BODY_BYTES) {
+      return jsonError('REQUEST_TOO_LARGE', '请求体超过公开 Beta 限制', 413, cors)
+    }
+    parsed = requestSchema.parse(JSON.parse(rawBody))
   } catch {
     return jsonError('INVALID_INPUT', '资料格式无效', 400, cors)
   }
@@ -61,9 +94,13 @@ export async function handleRequest(request: Request, env: WorkerEnv): Promise<R
   if (selectedIndexes.some((index) => !chunks[index]) || new Set(selectedIndexes).size !== selectedIndexes.length) {
     return jsonError('INVALID_CHUNK', '请求的资料分块不存在', 400, cors)
   }
-  if (!env.DASHSCOPE_API_KEY) return jsonError('MODEL_NOT_CONFIGURED', 'AI 拆卡服务尚未配置', 503, cors)
+  if (!env.DEEPSEEK_API_KEY) return jsonError('MODEL_NOT_CONFIGURED', 'AI 拆卡服务尚未配置', 503, cors)
+  if (env.REQUIRE_DAILY_BUDGET === 'true' && !env.DAILY_BUDGET) return jsonError('BUDGET_NOT_CONFIGURED', 'AI 预算保护尚未配置，请稍后再试', 503, cors)
 
   const selectedChunks = selectedIndexes.map((index) => chunks[index])
+  if (!(await reserveDailyBudget(env.DAILY_BUDGET, parsed.material.content.length, selectedChunks.length, env.DAILY_TOKEN_SOFT_LIMIT))) {
+    return jsonError('DAILY_BUDGET_EXCEEDED', '今日 AI 拆卡额度已用完，请明天再试或使用本地规则模式', 429, cors)
+  }
   const requestId = crypto.randomUUID()
   const headers = new Headers(cors)
   headers.set('content-type', 'text/event-stream; charset=utf-8')
@@ -92,16 +129,19 @@ async function processChunks(
   send({ type: 'start', requestId, totalChunks: chunks.length })
   let generated = 0
   let failedChunks = 0
+  const startedAt = Date.now()
+  let usage: TokenUsage = emptyUsage()
   for (const chunk of chunks) {
     if (requestSignal.aborted) return
     if (generated >= MAX_DRAFTS_PER_REQUEST) break
     send({ type: 'chunk-start', index: chunk.index, sourceRef: chunk.sourceRef })
-    let drafts = undefined
+    let result: GeneratedChunk | undefined
     let lastError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (requestSignal.aborted) return
       try {
-        drafts = await generateChunk(chunk, materialName, env, requestSignal)
+        result = await generateChunk(chunk, materialName, env, requestSignal)
+        usage = addUsage(usage, result.usage)
         break
       } catch (error) {
         if (requestSignal.aborted) return
@@ -109,8 +149,8 @@ async function processChunks(
         if (!isRetryableGenerationError(error)) break
       }
     }
-    if (drafts) {
-      const acceptedDrafts = drafts.slice(0, MAX_DRAFTS_PER_REQUEST - generated)
+    if (result) {
+      const acceptedDrafts = result.drafts.slice(0, MAX_DRAFTS_PER_REQUEST - generated)
       generated += acceptedDrafts.length
       send({ type: 'drafts', index: chunk.index, drafts: acceptedDrafts })
     } else {
@@ -125,13 +165,22 @@ async function processChunks(
     }
   }
   send({ type: 'complete', generated, failedChunks })
+  console.info('card-generation-complete', {
+    requestId,
+    durationMs: Date.now() - startedAt,
+    chunks: chunks.length,
+    generated,
+    failedChunks,
+    usage
+  })
 }
 
-async function generateChunk(chunk: MaterialChunk, materialName: string, env: WorkerEnv, requestSignal: AbortSignal) {
+async function generateChunk(chunk: MaterialChunk, materialName: string, env: WorkerEnv, requestSignal: AbortSignal): Promise<GeneratedChunk> {
   const payload = {
     model: MODEL,
     temperature: 0.2,
-    enable_thinking: false,
+    thinking: { type: 'disabled' },
+    max_tokens: MAX_OUTPUT_TOKENS,
     messages: [
       {
         role: 'system',
@@ -144,17 +193,21 @@ async function generateChunk(chunk: MaterialChunk, materialName: string, env: Wo
     ],
     response_format: { type: 'json_object' }
   }
-  const response = await fetchWithTimeout(`${(env.DASHSCOPE_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, '')}/chat/completions`, {
+  const response = await fetchWithTimeout(`${(env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${env.DASHSCOPE_API_KEY}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${env.DEEPSEEK_API_KEY}`, 'content-type': 'application/json' },
     body: JSON.stringify(payload)
   }, requestSignal, CHUNK_TIMEOUT_MS, env.fetchImpl ?? fetch)
   if (!response.ok) {
-    const error = new Error(`模型服务返回 ${response.status}`) as Error & { retryable?: boolean }
+    const error = new Error(`模型服务返回 ${response.status}`) as Error & { retryable?: boolean; balanceExhausted?: boolean }
     error.retryable = response.status === 429 || response.status >= 500
+    error.balanceExhausted = response.status === 402
     throw error
   }
-  const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
+  const body = await response.json() as {
+    choices?: Array<{ message?: { content?: unknown } }>
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+  }
   const content = body.choices?.[0]?.message?.content
   const output = llmCardsResponseSchema.parse(normalizeModelPayload(content))
   const results = await Promise.allSettled(output.cards.map((card) => buildLlmDraft(card, {
@@ -168,7 +221,41 @@ async function generateChunk(chunk: MaterialChunk, materialName: string, env: Wo
     const firstFailure = results.find((result) => result.status === 'rejected')
     if (firstFailure?.status === 'rejected') throw firstFailure.reason
   }
-  return drafts
+  return { drafts, usage: normalizeUsage(body.usage) }
+}
+
+async function reserveDailyBudget(store: BudgetStore | undefined, materialLength: number, chunkCount: number, configuredLimit: string | undefined): Promise<boolean> {
+  if (!store) return true
+  const limit = parsePositiveInteger(configuredLimit, DEFAULT_DAILY_TOKEN_SOFT_LIMIT)
+  const estimate = materialLength + 1_500 + chunkCount * MAX_OUTPUT_TOKENS * 2
+  const key = `daily-token-budget:${new Date().toISOString().slice(0, 10)}`
+  const current = Number.parseInt((await store.get(key)) ?? '0', 10) || 0
+  if (current + estimate > limit) return false
+  await store.put(key, String(current + estimate), { expirationTtl: 172_800 })
+  return true
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function emptyUsage(): TokenUsage {
+  return { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+}
+
+function addUsage(first: TokenUsage, second: TokenUsage): TokenUsage {
+  return {
+    promptTokens: first.promptTokens + second.promptTokens,
+    completionTokens: first.completionTokens + second.completionTokens,
+    totalTokens: first.totalTokens + second.totalTokens
+  }
+}
+
+function normalizeUsage(usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined): TokenUsage {
+  const promptTokens = usage?.prompt_tokens ?? 0
+  const completionTokens = usage?.completion_tokens ?? 0
+  return { promptTokens, completionTokens, totalTokens: usage?.total_tokens ?? promptTokens + completionTokens }
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, requestSignal: AbortSignal, timeoutMs: number, fetchImpl: typeof fetch): Promise<Response> {
@@ -209,6 +296,7 @@ function jsonError(code: string, message: string, status: number, headers: Heade
 }
 
 function safeErrorMessage(error: unknown): string {
+  if (error instanceof Error && 'balanceExhausted' in error && (error as Error & { balanceExhausted?: boolean }).balanceExhausted) return '模型账户余额不足，请稍后使用本地规则拆卡'
   if (error instanceof Error && error.message.includes('来源片段')) return '模型生成的来源片段未能对应原文，请重试该分块'
   if (error instanceof SyntaxError) return '模型返回的 JSON 无法解析，请重试该分块'
   if (error instanceof z.ZodError) return `模型返回的卡片字段未通过校验（${schemaIssueFields(error).join(', ')}），请重试该分块`
@@ -217,6 +305,7 @@ function safeErrorMessage(error: unknown): string {
 }
 
 function classifyGenerationError(error: unknown): string {
+  if (error instanceof Error && 'balanceExhausted' in error && (error as Error & { balanceExhausted?: boolean }).balanceExhausted) return 'MODEL_BALANCE_EXHAUSTED'
   if (error instanceof Error && error.message.includes('来源片段')) return 'SOURCE_EXCERPT_MISMATCH'
   if (error instanceof SyntaxError) return 'MODEL_JSON_INVALID'
   if (error instanceof z.ZodError) return 'MODEL_SCHEMA_INVALID'

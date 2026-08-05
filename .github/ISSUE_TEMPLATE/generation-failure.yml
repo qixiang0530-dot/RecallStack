@@ -1,0 +1,23 @@
+name: 拆卡失败
+description: 反馈 AI 或本地规则拆卡失败
+title: "[拆卡失败] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: error
+    attributes:
+      label: 错误提示
+      description: 请粘贴页面显示的错误，不要粘贴 API Key。
+    validations:
+      required: true
+  - type: input
+    id: time
+    attributes:
+      label: 发生时间
+      description: 请使用北京时间并尽量精确到分钟。
+  - type: textarea
+    id: material
+    attributes:
+      label: 资料规模
+      description: 资料类型、字符数和分块数量，不要提交原文。

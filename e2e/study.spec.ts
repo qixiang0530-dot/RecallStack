@@ -190,7 +190,7 @@ function mockAiDraft(id: string, question: string, sourceExcerpt: string) {
     contentHash: (id === 'thread-pool' ? 'c' : 'd').repeat(64),
     quality: 'needs-review',
     provider: 'llm',
-    model: 'qwen3.7-plus',
+    model: 'deepseek-v4-flash',
     promptVersion: 'v0.3-card-generation-1',
     createdAt: now,
     updatedAt: now

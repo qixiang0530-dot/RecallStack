@@ -20,14 +20,14 @@ describe('LLM card schema', () => {
     const draft = await buildLlmDraft(output, {
       sourceRef: 'java.md / Java 集合 / HashMap',
       sourceContent: output.sourceExcerpt,
-      model: 'qwen3.7-plus',
+      model: 'deepseek-v4-flash',
       promptVersion: 'v0.3-card-generation-1'
     })
 
     expect(draft).toMatchObject({
       provider: 'llm',
       quality: 'needs-review',
-      model: 'qwen3.7-plus',
+      model: 'deepseek-v4-flash',
       promptVersion: 'v0.3-card-generation-1',
       sourceExcerpt: output.sourceExcerpt,
       confidence: 0.82
@@ -54,7 +54,7 @@ describe('LLM card schema', () => {
     await expect(buildLlmDraft(output, {
       sourceRef: 'java.md',
       sourceContent: '这是实际原文。',
-      model: 'qwen3.7-plus',
+      model: 'deepseek-v4-flash',
       promptVersion: 'v0.3-card-generation-1'
     })).rejects.toThrow('来源片段')
   })
@@ -112,7 +112,7 @@ describe('LLM card schema', () => {
     const draft = await buildLlmDraft(output, {
       sourceRef: 'thread-pool.md',
       sourceContent: sourceSentence,
-      model: 'qwen3.7-plus',
+      model: 'deepseek-v4-flash',
       promptVersion: 'v0.3-card-generation-1'
     })
 

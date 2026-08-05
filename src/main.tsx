@@ -6,7 +6,10 @@ import { AppProvider } from './app/AppContext'
 import { database } from './data/database'
 import { seedBuiltInDeck } from './data/seed'
 import { StudyRepository } from './data/studyRepository'
+import { registerPwa } from './pwa'
 import './styles.css'
+
+registerPwa()
 
 async function start() {
   await seedBuiltInDeck(database)

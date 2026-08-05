@@ -200,6 +200,7 @@ a { color: inherit; text-decoration: none; }
 .ai-consent-box { margin-top: 18px; padding: 18px 20px; border-left: 3px solid var(--blue); background: #eaf0f3; }
 .ai-consent-box strong { color: var(--blue); font-size: 13px; }
 .ai-consent-box p { margin: 7px 0 12px; color: #52656e; font-size: 12px; line-height: 1.7; }
+.ai-consent-box .ai-limit-note { margin-top: 0; color: var(--amber); }
 .ai-consent-box label { display: flex; align-items: flex-start; gap: 9px; color: var(--ink); font-size: 12px; font-weight: 700; line-height: 1.5; cursor: pointer; }
 .ai-consent-box input { width: 16px; height: 16px; margin: 1px 0 0; accent-color: var(--green); }
 .provider-note { margin: 15px 0 0; color: var(--amber); font-size: 12px; font-weight: 700; }

@@ -4,6 +4,7 @@ import Dexie from 'dexie'
 import { MemoryRouter } from 'react-router-dom'
 import { RecallStackDatabase } from '../data/database'
 import { javaCards } from '../data/javaCards'
+import { JAVA_THREAD_POOL_DEMO } from '../data/demoMaterial'
 import { seedBuiltInDeck } from '../data/seed'
 import { StudyRepository } from '../data/studyRepository'
 import { AppProvider } from './AppContext'
@@ -159,6 +160,16 @@ describe('RecallStack app', () => {
     expect(screen.getByText('已加入个人资料牌组')).toBeInTheDocument()
   })
 
+  it('loads the built-in Java thread pool example for a first AI demo', async () => {
+    const user = userEvent.setup()
+    renderApp('/import')
+
+    await user.click(await screen.findByRole('button', { name: '载入 Java 线程池示例' }))
+
+    expect(screen.getByLabelText('资料内容')).toHaveValue(JAVA_THREAD_POOL_DEMO)
+    expect(screen.getByText('java-thread-pool-demo.md')).toBeInTheDocument()
+  })
+
   it('requires explicit review before an AI draft can enter the personal deck', async () => {
     const user = userEvent.setup()
     vi.stubEnv('VITE_CARD_GENERATION_API_URL', 'https://worker.test/api/card-generation')
@@ -171,6 +182,7 @@ describe('RecallStack app', () => {
 
     renderApp('/import')
     await user.click(await screen.findByRole('button', { name: 'AI 智能拆卡' }))
+    expect(screen.getAllByText(/DeepSeek V4 Flash/).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('checkbox', { name: /同意/ }))
     await user.type(await screen.findByLabelText('资料内容'), '# Java 并发\n\n线程池复用工作线程。')
     await user.click(screen.getByRole('button', { name: '生成 AI 卡片草稿' }))
@@ -333,7 +345,7 @@ function aiDraft() {
     contentHash: 'b'.repeat(64),
     quality: 'needs-review' as const,
     provider: 'llm' as const,
-    model: 'qwen3.7-plus',
+    model: 'deepseek-v4-flash',
     promptVersion: 'v0.3-card-generation-1',
     createdAt: new Date(),
     updatedAt: new Date()

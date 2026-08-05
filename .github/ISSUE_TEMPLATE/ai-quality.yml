@@ -1,0 +1,27 @@
+name: AI 生成质量问题
+description: 反馈卡片内容、来源依据或审核提示质量
+title: "[AI质量] "
+labels:
+  - ai-quality
+body:
+  - type: markdown
+    attributes:
+      value: 请不要提交公司内部资料、API Key 或其他敏感原文。
+  - type: textarea
+    id: context
+    attributes:
+      label: 使用场景
+      description: 资料主题、资料类型和大致长度。
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 生成问题
+      description: 哪张卡片或哪个来源片段不符合预期？请脱敏描述。
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器和设备

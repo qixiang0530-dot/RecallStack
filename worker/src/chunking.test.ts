@@ -7,13 +7,13 @@ describe('chunkMaterial', () => {
       '# Java',
       '## 集合',
       '',
-      '第一段内容。'.repeat(300),
+      '第一段内容。'.repeat(120),
       '',
-      '第二段内容。'.repeat(300),
+      '第二段内容。'.repeat(120),
       '',
       '### HashMap',
       '',
-      'HashMap 内容。'.repeat(300)
+      'HashMap 内容。'.repeat(120)
     ].join('\n')
 
     const chunks = chunkMaterial({ name: 'java.md', content })
@@ -36,7 +36,7 @@ describe('chunkMaterial', () => {
   })
 
   it('rejects material longer than the configured limit', () => {
-    expect(() => chunkMaterial({ name: 'large.md', content: 'x'.repeat(MAX_MATERIAL_LENGTH + 1) })).toThrow('资料过长')
+    expect(() => chunkMaterial({ name: 'large.md', content: 'x'.repeat(MAX_MATERIAL_LENGTH + 1) })).toThrow('12000')
   })
 
   it('keeps a heading prefix within the hard chunk limit', () => {

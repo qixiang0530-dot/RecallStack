@@ -1,5 +1,6 @@
 import { BarChart3, BookOpen, FilePlus2, Home, Layers3, Settings } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
+import { APP_VERSION } from '../app/release'
 
 const navigation = [
   { to: '/', label: '首页', icon: Home, end: true },
@@ -30,8 +31,8 @@ export function AppShell() {
           ))}
         </nav>
         <div className="rail-note">
-          <span>LOCAL FIRST</span>
-          <p>学习记录只保存在当前浏览器。</p>
+          <span>PUBLIC BETA / {APP_VERSION}</span>
+          <p>AI 资料需要经由 Worker 发送到 DeepSeek；学习记录只保存在当前浏览器。</p>
         </div>
       </aside>
       <main className="main-content"><Outlet /></main>

@@ -32,7 +32,11 @@ export class LlmCardGenerationProvider implements CardGenerationProvider {
     })
     if (!response.ok) {
       let message = `AI 拆卡服务返回 ${response.status}`
-      const body = await response.json().catch(() => undefined) as { message?: string } | undefined
+      const body = await response.json().catch(() => undefined) as { code?: string; message?: string } | undefined
+      if (body?.code === 'DAILY_BUDGET_EXCEEDED') message = '今日 AI 拆卡额度已用完，你仍可以使用本地规则拆卡。'
+      if (body?.code === 'AI_DISABLED') message = 'AI 拆卡服务当前已暂停，你仍可以使用本地规则拆卡。'
+      if (body?.code === 'MATERIAL_TOO_LARGE') message = '资料超过公开 Beta 限制，请缩短到 12000 字符以内。'
+      if (body?.code === 'MODEL_NOT_CONFIGURED') message = 'AI 服务尚未完成配置，请稍后再试。'
       if (body?.message) message = body.message
       throw new Error(message)
     }
