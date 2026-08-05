@@ -46,6 +46,12 @@ describe('RecallStack app', () => {
     expect(await screen.findByText('5 张新卡')).toBeInTheDocument()
   })
 
+  it('shows the accessible RecallStack brand mark', async () => {
+    renderApp()
+
+    expect(await screen.findByRole('img', { name: 'RecallStack' })).toHaveAttribute('src', './recallstack-brand.svg')
+  })
+
   it('reveals the answer before accepting a rating', async () => {
     const user = userEvent.setup()
     renderApp('/study')

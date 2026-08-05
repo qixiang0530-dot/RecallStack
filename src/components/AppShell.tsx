@@ -16,7 +16,7 @@ export function AppShell() {
     <div className="app-shell">
       <aside className="side-rail">
         <NavLink className="brand" to="/" aria-label="RecallStack 首页">
-          <span className="brand-mark">R</span>
+          <span className="brand-mark"><img src="./recallstack-brand.svg" alt="RecallStack" /></span>
           <span>
             <strong>RecallStack</strong>
             <small>Java memory lab</small>
